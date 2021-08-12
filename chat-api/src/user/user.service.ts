@@ -90,6 +90,10 @@ export class UserService {
     return from(this.userRepo.findOne(id));
   }
 
+  public getOne(id: number): Promise<UserI> {
+    return this.userRepo.findOneOrFail(id);
+  }
+
   private findByEmail(email: string): Observable<UserI> {
     return from(
       this.userRepo.findOne(

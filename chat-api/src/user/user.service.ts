@@ -1,7 +1,7 @@
 import {
-  BadRequestException,
   ConflictException,
   Injectable,
+  InternalServerErrorException,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -11,14 +11,10 @@ import {
   paginate,
   Pagination,
 } from 'nestjs-typeorm-paginate';
-import { from, Observable } from 'rxjs';
-import { map, mapTo, switchMap } from 'rxjs/operators';
-import { Repository } from 'typeorm';
+import { Like, Repository } from 'typeorm';
 import { AuthService } from '../auth/auth.service';
 import { UserEntity } from './model/user.entity';
 import { UserI } from './model/user.interface';
-
-const bcrypt = require('bcrypt');
 
 @Injectable()
 export class UserService {
@@ -28,90 +24,80 @@ export class UserService {
     private readonly authService: AuthService,
   ) {}
 
-  createUser(newUser: UserI): Observable<UserI> {
-    return this.checkEmail(newUser.email).pipe(
-      switchMap((exists: boolean) => {
-        if (!exists) {
-          return this.hashPassword(newUser.password).pipe(
-            switchMap((passwordHash: string) => {
-              newUser.password = passwordHash;
-              return from(this.userRepo.save(newUser)).pipe(
-                switchMap((user: UserI) => this.findOne(user.id)),
-              );
-            }),
-          );
+  async createUser(newUser: UserI): Promise<UserI> {
+    try {
+      const exists: boolean = await this.checkEmail(newUser.email);
+      if (!exists) {
+        let passwordHash: string = await this.hashPassword(newUser.password);
+        newUser.password = passwordHash;
+        let user: UserI = await this.userRepo.save(newUser);
+        return this.findOne(user.id);
+      } else {
+        throw new ConflictException('Email is already in use!');
+      }
+    } catch (error) {
+      throw new InternalServerErrorException(error);
+    }
+  }
+
+  async login(user: UserI): Promise<string> {
+    try {
+      let foundUser: UserI = await this.findByEmail(user.email);
+      if (foundUser) {
+        let matched = await this.validatePassword(
+          user.password,
+          foundUser.password,
+        );
+        if (matched) {
+          let payload: UserI = await this.findOne(foundUser.id);
+          return this.authService.generateJwt(payload);
         } else {
-          throw new ConflictException('Email is already in use!');
+          throw new UnauthorizedException('Wrong credentials!');
         }
-      }),
-    );
+      } else {
+        throw new NotFoundException('User not found!');
+      }
+    } catch (error) {
+      throw new InternalServerErrorException(error);
+    }
   }
 
-  login(user: UserI): Observable<string> {
-    return this.findByEmail(user.email).pipe(
-      switchMap((foundUser: UserI) => {
-        if (foundUser) {
-          return this.validatePassword(user.password, foundUser.password).pipe(
-            switchMap((matched: boolean) => {
-              if (matched) {
-                return this.findOne(foundUser.id).pipe(
-                  switchMap((payload: UserI) =>
-                    this.authService.generateJwt(payload),
-                  ),
-                );
-              } else {
-                throw new UnauthorizedException('Wrong credentials!');
-              }
-            }),
-          );
-        } else {
-          throw new NotFoundException('User not found!');
-        }
-      }),
-    );
+  findAll(options: IPaginationOptions): Promise<Pagination<UserI>> {
+    return paginate<UserEntity>(this.userRepo, options);
   }
 
-  findAll(options: IPaginationOptions): Observable<Pagination<UserI>> {
-    return from(paginate<UserEntity>(this.userRepo, options));
+  findAllByUsername(username: string): Promise<UserI[]> {
+    return this.userRepo.find({ where: { username: Like(`%${username}%`) } });
   }
 
-  private hashPassword(password: string): Observable<string> {
+  private async hashPassword(password: string): Promise<string> {
     return this.authService.hashPassword(password);
   }
 
-  private validatePassword(
+  private async validatePassword(
     password: string,
     storedPasswordHash: string,
-  ): Observable<any> {
+  ): Promise<any> {
     return this.authService.comparePassword(password, storedPasswordHash);
   }
 
-  private findOne(id: number): Observable<UserI> {
-    return from(this.userRepo.findOne(id));
-  }
-
-  public getOne(id: number): Promise<UserI> {
+  public findOne(id: number): Promise<UserI> {
     return this.userRepo.findOneOrFail(id);
   }
 
-  private findByEmail(email: string): Observable<UserI> {
-    return from(
-      this.userRepo.findOne(
-        { email },
-        { select: ['id', 'username', 'email', 'password'] },
-      ),
+  private findByEmail(email: string): Promise<UserI> {
+    return this.userRepo.findOne(
+      { email },
+      { select: ['id', 'username', 'email', 'password'] },
     );
   }
 
-  private checkEmail(email: string): Observable<boolean> {
-    return from(this.userRepo.findOne({ email: email })).pipe(
-      map((user: UserI) => {
-        if (user) {
-          return true;
-        } else {
-          return false;
-        }
-      }),
-    );
+  private async checkEmail(email: string): Promise<boolean> {
+    let user = await this.userRepo.findOne({ email: email });
+    if (user) {
+      return true;
+    } else {
+      return false;
+    }
   }
 }

@@ -1,8 +1,6 @@
 import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Pagination } from 'nestjs-typeorm-paginate';
-import { Observable, switchMap, map } from 'rxjs';
-import { JwtAuthGuard } from '../auth/guards/jwt.guard';
 import { CreateUserDto, LoginUserDto } from './model/user.dto';
 import { LoginResponseI, UserI } from './model/user.interface';
 import { UserHelperService } from './user-helper.service';
@@ -17,39 +15,37 @@ export class UserController {
   ) {}
 
   @Post()
-  CreateUser(@Body() data: CreateUserDto): Observable<UserI> {
-    return this.userHelperService
-      .createUserDtoToEntity(data)
-      .pipe(switchMap((user: UserI) => this.userService.createUser(user)));
+  CreateUser(@Body() data: CreateUserDto): Promise<UserI> {
+    const user: UserI = this.userHelperService.createUserDtoToEntity(data);
+    return this.userService.createUser(user);
   }
 
   @Post('login')
-  Login(@Body() data: LoginUserDto): Observable<LoginResponseI> {
-    return this.userHelperService.loginUserDtoToEntity(data).pipe(
-      switchMap((user: UserI) =>
-        this.userService.login(user).pipe(
-          map((jwt: string) => {
-            return {
-              access_token: jwt,
-              token_type: 'JWT',
-              expires_in: 100000,
-            };
-          }),
-        ),
-      ),
-    );
+  async Login(@Body() data: LoginUserDto): Promise<LoginResponseI> {
+    const user: UserI = this.userHelperService.loginUserDtoToEntity(data);
+    const jwt: string = await this.userService.login(user);
+    return {
+      access_token: jwt,
+      token_type: 'JWT',
+      expires_in: 100000,
+    };
   }
 
   @Get()
-  @UseGuards(JwtAuthGuard)
   FindAll(
     @Query('page') page: number = 1,
     @Query('limit') limit: number = 10,
-  ): Observable<Pagination<UserI>> {
+  ): Promise<Pagination<UserI>> {
+    limit = limit > 100 ? 100 : limit;
     return this.userService.findAll({
       page,
       limit,
       route: `${this.configService.get('BASE_URL')}/users`,
     });
+  }
+
+  @Get('find-by-username')
+  findByUsername(@Query('username') username: string): Promise<UserI[]> {
+    return this.userService.findAllByUsername(username);
   }
 }

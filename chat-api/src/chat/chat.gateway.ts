@@ -1,4 +1,4 @@
-import { UnauthorizedException } from '@nestjs/common';
+import { OnModuleInit, UnauthorizedException } from '@nestjs/common';
 import {
   OnGatewayConnection,
   OnGatewayDisconnect,
@@ -6,17 +6,20 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
-import { paginate } from 'nestjs-typeorm-paginate';
 import { Server, Socket } from 'socket.io';
 import { AuthService } from '../auth/auth.service';
 import { UserI } from '../user/model/user.interface';
 import { UserService } from '../user/user.service';
+import { ConnectedUserService } from './connected-user.service';
+import { ConnectedUserI } from './model/connected-user.interface';
 import { PageI } from './model/page.interface';
 import { RoomI } from './model/room.interface';
 import { RoomService } from './room.service';
 
 @WebSocketGateway({ cors: { origin: ['https://hoppscotch.io'] } })
-export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class ChatGateway
+  implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit
+{
   @WebSocketServer()
   server: Server;
 
@@ -24,7 +27,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly authService: AuthService,
     private readonly userService: UserService,
     private readonly roomService: RoomService,
+    private readonly connectedUserService: ConnectedUserService,
   ) {}
+
+  async onModuleInit() {
+    await this.connectedUserService.deleteAll();
+  }
 
   async handleConnection(socket: Socket) {
     try {
@@ -41,6 +49,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
           limit: 10,
         });
         rooms.meta.currentPage = rooms.meta.currentPage - 1;
+
+        await this.connectedUserService.create({ socketId: socket.id, user });
         return this.server.to(socket.id).emit('rooms', rooms);
       }
     } catch (error) {
@@ -48,7 +58,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-  handleDisconnect() {
+  async handleDisconnect(socket: Socket) {
+    await this.connectedUserService.deleteBySocketId(socket.id);
     console.log('disconnected');
   }
 
@@ -58,8 +69,23 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('createRoom')
-  async onCreateRoom(socket: Socket, room: RoomI): Promise<RoomI> {
-    return this.roomService.createRoom(room, socket.data.user);
+  async onCreateRoom(socket: Socket, room: RoomI) {
+    const createdRoom: RoomI = await this.roomService.createRoom(
+      room,
+      socket.data.user,
+    );
+    for (const user of createdRoom.users) {
+      const connections: ConnectedUserI[] =
+        await this.connectedUserService.findByUser(user);
+      const rooms = await this.roomService.getRoomsForUser(user.id, {
+        page: 1,
+        limit: 10,
+      });
+      rooms.meta.currentPage = rooms.meta.currentPage - 1;
+      for (const connection of connections) {
+        await this.server.to(connection.socketId).emit('rooms', rooms);
+      }
+    }
   }
 
   @SubscribeMessage('paginateRooms')

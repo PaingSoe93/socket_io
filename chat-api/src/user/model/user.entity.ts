@@ -5,8 +5,10 @@ import {
   Entity,
   JoinTable,
   ManyToMany,
+  OneToMany,
   PrimaryGeneratedColumn,
 } from 'typeorm';
+import { ConnectedUserEntity } from '../../chat/model/connected-user.entity';
 import { RoomEntity } from '../../chat/model/room.entity';
 
 @Entity('user')
@@ -26,6 +28,9 @@ export class UserEntity {
   @ManyToMany(() => RoomEntity)
   @JoinTable({ name: 'room_user' })
   rooms: RoomEntity[];
+
+  @OneToMany(() => ConnectedUserEntity, (connections) => connections.user)
+  connections: ConnectedUserEntity[];
 
   @BeforeInsert()
   @BeforeUpdate()

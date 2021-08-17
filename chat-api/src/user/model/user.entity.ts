@@ -9,6 +9,8 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { ConnectedUserEntity } from '../../chat/model/connected-user.entity';
+import { JoinedRoomEntity } from '../../chat/model/joined-room.entity';
+import { MessageEntity } from '../../chat/model/message.entity';
 import { RoomEntity } from '../../chat/model/room.entity';
 
 @Entity('user')
@@ -31,6 +33,12 @@ export class UserEntity {
 
   @OneToMany(() => ConnectedUserEntity, (connections) => connections.user)
   connections: ConnectedUserEntity[];
+
+  @OneToMany(() => JoinedRoomEntity, (joinedRoom) => joinedRoom.room)
+  joinedRooms: JoinedRoomEntity[];
+
+  @OneToMany(() => MessageEntity, (message) => message.user)
+  messages: MessageEntity[];
 
   @BeforeInsert()
   @BeforeUpdate()
